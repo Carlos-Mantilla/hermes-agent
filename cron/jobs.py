@@ -1442,6 +1442,25 @@ def compute_next_run(schedule: Dict[str, Any], last_run_at: Optional[str] = None
                 base_time = _ensure_aware(datetime.fromisoformat(last_run_at))
             except Exception:
                 base_time = now
+        # croniter 6.0.0 se queda con el offset de `base_time`. El 17-oct
+        # (EDT, -04) un `0 9 7 * *` sale 10:00-05:00 el 7-nov, no 09:00.
+        # Se le pasa la hora de pared, sin tz, y se vuelve a pegar la zona
+        # IANA: el 7-nov queda 09:00-05:00 y el 20-mar-2027 queda 09:00-04:00.
+        from zoneinfo import ZoneInfo
+
+        zone = base_time.tzinfo
+        if isinstance(zone, ZoneInfo):
+            base_wall = base_time.replace(tzinfo=None)
+            it = croniter(expr, base_wall)
+            base_ts = base_time.timestamp()
+            next_wall = it.get_next(datetime)
+            for _ in range(2):
+                for fold in (0, 1):
+                    candidate = next_wall.replace(tzinfo=zone, fold=fold)
+                    if candidate.timestamp() > base_ts:
+                        return candidate.isoformat()
+                next_wall = it.get_next(datetime)
+            return next_wall.replace(tzinfo=zone).isoformat()
         cron = croniter(expr, base_time)
         next_run = cron.get_next(datetime)
         return next_run.isoformat()
